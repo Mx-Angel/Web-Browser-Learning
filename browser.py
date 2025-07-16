@@ -11,6 +11,7 @@ FONTS = {}
 
 # Constants
 WIDTH, HEIGHT = 1280, 720
+CANVAS_WIDTH, CANVAS_HEIGHT = 0, 0
 HSTEP, VSTEP = 13, 18
 # SCROLL_STEP = 100 # Not used, tkinter handles scrolling natively
 
@@ -32,28 +33,41 @@ class Layout:
         self.style = "roman"
         self.size = 16
         self.line = []
+        self.centre_line = False
+        self.super_text = False
         
         for tok in tokens:
             self.token(tok)
 
-        self.flush()  # Flush any remaining words in the last line
+        self.flush() # Flush any remaining words in the last line
 
     def flush(self):
         if not self.line:
             return
         
-        metrics = [font.metrics() for _, _, font in self.line]
+        metrics = [font.metrics() for _, _, font, _ in self.line]
         max_ascent = max([metric['ascent'] for metric in metrics])
         max_descent = max([metric['descent'] for metric in metrics])
 
+        if self.centre_line:
+            total_width = sum([font.measure(word) for _, word, font, _ in self.line])
+            total_space = CANVAS_WIDTH - HSTEP * 2  # Keep some space on the sides
+            offset = (total_space - total_width) // 2
+
+            # Adjust for centring (now with 4-tuple)
+            self.line = [(x + offset, word, font, is_super) for x, word, font, is_super in self.line]
+            self.centre_line = False
+
         baseline = self.cursor_y + max_ascent
 
-        for x, word, font in self.line:
+        for x, word, font, is_super in self.line:
             y = baseline - font.metrics("ascent")
+            if is_super:
+                y = baseline - max_ascent  # Move THIS word up
             self.display_list.append((x, y, word, font))
 
         # Move cursor down for next line
-        self.cursor_y = baseline + max_ascent
+        self.cursor_y = baseline + max_descent
         self.cursor_x = HSTEP
         self.line = []
 
@@ -73,9 +87,9 @@ class Layout:
                 # (but not after the last line of this text token)
                 if line_idx < len(lines) - 1:
                     self.flush()  # Flush current line
-                    self.cursor_y += VSTEP  # Add extra space for explicit newline
+                    self.cursor_y += VSTEP # Add extra space for explicit newline
                     
-        elif isinstance(tok, Tag):  # Handle formatting tags
+        elif isinstance(tok, Tag): # Handle formatting tags
             if tok.tag == "i":
                 self.style = "italic"
             elif tok.tag == "/i":
@@ -97,24 +111,68 @@ class Layout:
             elif tok.tag == "/p":
                 self.flush()
                 self.cursor_y += VSTEP  # Extra space between paragraphs
+            elif tok.tag.startswith("h1"):
+                self.flush()  # Flush current line before heading
+                self.size += 4
+            elif tok.tag == "/h1":
+                self.centre_line = True
+                self.size -= 4
+            elif tok.tag == "sup":
+                self.size //= 2
+                self.super_text = True
+            elif tok.tag == "/sup":
+                self.size *= 2
 
     def word(self, word):
-        font = get_font(self.size, self.weight, self.style)
-        
-        # Measure the width of this word
+        while word:
+            font = get_font(self.size, self.weight, self.style)
+            w = font.measure(word)
+            
+            # Check if word fits on current line
+            if self.cursor_x + w > CANVAS_WIDTH - HSTEP:
+                split_word = None
+
+                for index, char in enumerate(word):
+                    partial_word = word[:index + 1]
+                    if self.cursor_x + font.measure(partial_word + "-") < CANVAS_WIDTH - HSTEP:
+                        split_word = partial_word
+                    else:
+                        break
+
+                if not split_word:
+                    # If no split word found, just flush current line
+                    self.flush()
+                else:
+                    first_part = split_word + "-"
+                    self.add_word_to_line(first_part, font)
+                    self.flush()  # Flush current line after adding first part
+
+                    # Print remaining part if word
+                    word = word[len(split_word):]
+                    continue
+            else:
+                # Add word to current line
+                self.add_word_to_line(word, font)
+                break
+
+    def add_word_to_line(self, word, font):
+        """Helper method to add word to current line"""
+        is_super = False
         w = font.measure(word)
         
-        # Check if word fits on current line
-        if self.cursor_x + w > WIDTH - HSTEP:
-            # Word doesn't fit, wrap to next line
-            self.flush()
+        if self.super_text:
+            previous_space = font.measure(" ")
+            reduced_space = previous_space // 2
+            self.cursor_x -= (previous_space + reduced_space)
+            is_super = True
         
-        # Add word to line list at current position (with font!) but without y axis as it will be calculated later
-        # This is due to the possibility of multiple fonts in a single line
-        self.line.append((self.cursor_x, word, font))
+        self.line.append((self.cursor_x, word, font, is_super))
         
-        # Move cursor to end of word plus space
-        self.cursor_x += w + font.measure(" ")
+        if self.super_text:
+            self.cursor_x += w
+            self.super_text = False
+        else:
+            self.cursor_x += w + font.measure(" ")
 
 class Browser:
     def __init__(self):
@@ -150,9 +208,10 @@ class Browser:
         self.canvas.bind("<Configure>", self.window_resize)
 
     def window_resize(self, event):
-        global WIDTH, HEIGHT
-        WIDTH, HEIGHT = event.width, event.height
-        self.display_list = Layout(self.tokens).display_list  # Use Layout class
+        global CANVAS_WIDTH, CANVAS_HEIGHT
+        CANVAS_WIDTH, CANVAS_HEIGHT = event.width, event.height
+    
+        self.display_list = Layout(self.tokens).display_list
         self.update_scroll_region()
         self.draw()
 
@@ -171,9 +230,17 @@ class Browser:
             body = url.request()
             tokens = lex(body)  # Now returns tokens, not text
 
-        self.tokens = tokens  # Store tokens instead of text
-        self.display_list = Layout(tokens).display_list  # Use Layout class
-
+        self.tokens = tokens
+        
+        # Set initial canvas dimensions if not set
+        global CANVAS_WIDTH, CANVAS_HEIGHT
+        if CANVAS_WIDTH == 0:
+            self.window.update_idletasks()  # Force window to calculate sizes
+            CANVAS_WIDTH = self.canvas.winfo_width()
+            CANVAS_HEIGHT = self.canvas.winfo_height()
+        
+        self.display_list = Layout(tokens).display_list
+        
         # Calculate content height and set scroll region
         if self.display_list:
             self.content_height = max(y for x, y, word, font in self.display_list) + VSTEP
@@ -185,7 +252,13 @@ class Browser:
 
     def update_scroll_region(self):
         """Set the scrollable region of the canvas"""
-        self.canvas.configure(scrollregion=(0, 0, WIDTH, self.content_height))
+        if hasattr(self, 'content_height'):
+            self.canvas.configure(scrollregion=(0, 0, CANVAS_WIDTH, self.content_height))
+        else:
+            # Use actual canvas dimensions as fallback
+            actual_width = self.canvas.winfo_width() or WIDTH
+            actual_height = self.canvas.winfo_height() or HEIGHT
+            self.canvas.configure(scrollregion=(0, 0, actual_width, actual_height))
 
     def draw(self):
         self.canvas.delete("all")
