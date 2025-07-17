@@ -1,4 +1,4 @@
-from requests import URL, lex, show_source, Text, Tag
+from requests import URL, Text, Element, HTMLParser  # ✅ Add HTMLParser import
 
 from requests import DEFAULT_PAGE
 
@@ -25,7 +25,7 @@ def get_font(size, weight="normal", style="roman"):
 
 
 class Layout:
-    def __init__(self, tokens):
+    def __init__(self, tree):  # Now takes a tree, not tokens
         self.display_list = []
         self.cursor_x = HSTEP
         self.cursor_y = VSTEP
@@ -36,10 +36,60 @@ class Layout:
         self.centre_line = False
         self.super_text = False
         
-        for tok in tokens:
-            self.token(tok)
+        # Use recurse method for tree traversal
+        self.recurse(tree)
+        self.flush()  # Flush any remaining words in the last line
 
-        self.flush() # Flush any remaining words in the last line
+    def open_tag(self, tag):
+        if tag == "i":
+            self.style = "italic"
+        elif tag == "b":
+            self.weight = "bold"
+        elif tag == "small":
+            self.size -= 2
+        elif tag == "big":
+            self.size += 2
+        elif tag == "br":
+            self.flush()
+        elif tag.startswith("h1"):
+            self.flush()  # Flush current line before heading
+            self.size += 4
+        elif tag == "sup":
+            self.size //= 2
+            self.super_text = True
+
+    def close_tag(self, tag):
+        if tag == "i":
+            self.style = "roman"
+        elif tag == "b":
+            self.weight = "normal"
+        elif tag == "small":
+            self.size += 2
+        elif tag == "big":
+            self.size -= 2
+        elif tag == "p":
+            self.flush()
+            self.cursor_y += VSTEP  # Extra space between paragraphs
+        elif tag == "h1":
+            self.centre_line = True
+            self.size -= 4
+            self.flush()
+        elif tag == "sup":
+            self.size *= 2
+        elif tag in ["div", "section", "article", "header", "footer", "main", "nav"]:
+            self.flush()
+        elif tag == "br":
+            self.flush()
+
+    def recurse(self, tree):
+        if isinstance(tree, Text):
+            for word in tree.text.split():
+                self.word(word)
+        else:
+            self.open_tag(tree.tag)
+            for child in tree.children:
+                self.recurse(child)
+            self.close_tag(tree.tag)
 
     def flush(self):
         if not self.line:
@@ -71,57 +121,57 @@ class Layout:
         self.cursor_x = HSTEP
         self.line = []
 
-    def token(self, tok):
-        if isinstance(tok, Text):
-            # Split text into lines first (preserve explicit newlines)
-            lines = tok.text.split('\n')
+    # def token(self, tok): # Replaced by recurse method
+    #     if isinstance(tok, Text):
+    #         # Split text into lines first (preserve explicit newlines)
+    #         lines = tok.text.split('\n')
             
-            for line_idx, line in enumerate(lines):
-                # For each line, process word by word
-                words = line.split()
+    #         for line_idx, line in enumerate(lines):
+    #             # For each line, process word by word
+    #             words = line.split()
                 
-                for word in words:
-                    self.word(word)
+    #             for word in words:
+    #                 self.word(word)
                 
-                # After processing all words in a line, move to next line for explicit newline
-                # (but not after the last line of this text token)
-                if line_idx < len(lines) - 1:
-                    self.flush()  # Flush current line
-                    self.cursor_y += VSTEP # Add extra space for explicit newline
+    #             # After processing all words in a line, move to next line for explicit newline
+    #             # (but not after the last line of this text token)
+    #             if line_idx < len(lines) - 1:
+    #                 self.flush()  # Flush current line
+    #                 self.cursor_y += VSTEP # Add extra space for explicit newline
                     
-        elif isinstance(tok, Tag): # Handle formatting tags
-            if tok.tag == "i":
-                self.style = "italic"
-            elif tok.tag == "/i":
-                self.style = "roman"
-            elif tok.tag == "b":
-                self.weight = "bold"
-            elif tok.tag == "/b":
-                self.weight = "normal"
-            elif tok.tag == "small":
-                self.size -= 2
-            elif tok.tag == "/small":
-                self.size += 2
-            elif tok.tag == "big":
-                self.size += 2
-            elif tok.tag == "/big":
-                self.size -= 2
-            elif tok.tag == "br":
-                self.flush()
-            elif tok.tag == "/p":
-                self.flush()
-                self.cursor_y += VSTEP  # Extra space between paragraphs
-            elif tok.tag.startswith("h1"):
-                self.flush()  # Flush current line before heading
-                self.size += 4
-            elif tok.tag == "/h1":
-                self.centre_line = True
-                self.size -= 4
-            elif tok.tag == "sup":
-                self.size //= 2
-                self.super_text = True
-            elif tok.tag == "/sup":
-                self.size *= 2
+    #     elif isinstance(tok, Element): # Handle formatting tags
+    #         if tok.tag == "i":
+    #             self.style = "italic"
+    #         elif tok.tag == "/i":
+    #             self.style = "roman"
+    #         elif tok.tag == "b":
+    #             self.weight = "bold"
+    #         elif tok.tag == "/b":
+    #             self.weight = "normal"
+    #         elif tok.tag == "small":
+    #             self.size -= 2
+    #         elif tok.tag == "/small":
+    #             self.size += 2
+    #         elif tok.tag == "big":
+    #             self.size += 2
+    #         elif tok.tag == "/big":
+    #             self.size -= 2
+    #         elif tok.tag == "br":
+    #             self.flush()
+    #         elif tok.tag == "/p":
+    #             self.flush()
+    #             self.cursor_y += VSTEP  # Extra space between paragraphs
+    #         elif tok.tag.startswith("h1"):
+    #             self.flush()  # Flush current line before heading
+    #             self.size += 4
+    #         elif tok.tag == "/h1":
+    #             self.centre_line = True
+    #             self.size -= 4
+    #         elif tok.tag == "sup":
+    #             self.size //= 2
+    #             self.super_text = True
+    #         elif tok.tag == "/sup":
+    #             self.size *= 2
 
     def word(self, word):
         while word:
@@ -176,6 +226,7 @@ class Layout:
 
 class Browser:
     def __init__(self):
+        self.nodes = []
         self.window = tk.Tk()
         self.canvas = tk.Canvas(
             self.window,
@@ -210,36 +261,37 @@ class Browser:
     def window_resize(self, event):
         global CANVAS_WIDTH, CANVAS_HEIGHT
         CANVAS_WIDTH, CANVAS_HEIGHT = event.width, event.height
-    
-        self.display_list = Layout(self.tokens).display_list
-        self.update_scroll_region()
-        self.draw()
+
+        if hasattr(self, 'tree'):
+            self.display_list = Layout(self.tree).display_list
+            self.update_scroll_region()
+            self.draw()
 
     def load(self, url):
         if url.scheme == "file":
             with open(url.path, 'r', encoding='utf8') as f:
                 body = f.read()
-                tokens = lex(body)  # Now returns tokens, not text
+                tree = HTMLParser(body).parse()
         elif url.entity == "data":
             _, content = url.parse_data_url(url.content)
-            tokens = lex(content)  # Now returns tokens, not text
+            tree = HTMLParser(content).parse()
         elif url.entity == "view-source":
             body = url.request()
-            tokens = [Text(body)]  # Wrap in Text object for consistency
+            tree = Text(body, None)  # Create a text node
         else:
             body = url.request()
-            tokens = lex(body)  # Now returns tokens, not text
+            tree = HTMLParser(body).parse()  # Returns single Element tree
 
-        self.tokens = tokens
+        self.tree = tree
         
         # Set initial canvas dimensions if not set
         global CANVAS_WIDTH, CANVAS_HEIGHT
         if CANVAS_WIDTH == 0:
-            self.window.update_idletasks()  # Force window to calculate sizes
+            self.window.update_idletasks()
             CANVAS_WIDTH = self.canvas.winfo_width()
             CANVAS_HEIGHT = self.canvas.winfo_height()
         
-        self.display_list = Layout(tokens).display_list
+        self.display_list = Layout(tree).display_list  # Pass tree directly
         
         # Calculate content height and set scroll region
         if self.display_list:

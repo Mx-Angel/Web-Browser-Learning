@@ -15,92 +15,183 @@ ENTITIES = {
     "&copy;": "©",
     "&ndash;": "-"
 }
+SELF_CLOSING_TAGS = [
+    "area", "base", "br", "col", "embed", "hr", "img", "input",
+    "link", "meta", "param", "source", "track", "wbr",
+]
 
 class Text:
-    def __init__(self, text):
+    def __init__(self, text, parent):
         self.text = text
-
-class Tag:
-    def __init__(self, tag):
+        self.children = []
+        self.parent = parent
+    
+    def __repr__(self):
+        return repr(self.text)
+class Element:
+    def __init__(self, tag, attributes, parent):
         self.tag = tag
+        self.attributes = attributes
+        self.children = []
+        self.parent = parent
 
-def lex(body) -> list:
-    out = []
-    buffer = ""
-    in_tag = False
-    i = 0
+    def __repr__(self):
+        return "<" + self.tag + ">"
 
-    # Block elements that should create line breaks
-    block_start_tags = ["div", "h1", "h2", "h3", "h4", "h5", "h6", "li"]
+class HTMLParser:
+    def __init__(self, body):
+        self.body = body
+        self.unfinished = []
+        self.HEAD_TAGS = [
+            "base", "basefont", "bgsound", "noscript",
+            "link", "meta", "title", "style", "script",
+        ]
 
-    while i < len(body):
-        char = body[i]
-        
-        if char == "<":
-            # If we have text in buffer, add it as Text object
-            if buffer:
-                out.append(Text(buffer))
-                buffer = ""
+    def parse(self) -> list:
+        buffer = ""
+        in_tag = False
+        i = 0
+
+        # Block elements that should create line breaks
+        block_start_tags = ["div", "h1", "h2", "h3", "h4", "h5", "h6", "li"]
+
+        while i < len(self.body):
+            char = self.body[i]
             
-            in_tag = True
-            i += 1
-            
-        elif char == ">" and in_tag:
-            # End of tag - add Tag object
-            tag_content = buffer.strip()
-            out.append(Tag(tag_content))
-            
-            # Extract clean tag name for block element checking
-            # Remove any attributes and clean up the tag name
-            clean_tag = tag_content.split()[0] if tag_content else ""
-            if clean_tag.startswith('/'):
-                clean_tag = clean_tag[1:]  # Remove closing slash
-            clean_tag = clean_tag.lower()
-            
-            # Handle block elements - add newline after certain tags
-            if clean_tag == "br":
-                out.append(Text("\n"))
-            elif clean_tag in block_start_tags and tag_content.startswith('/'):
-                # Only add newlines for CLOSING block tags
-                out.append(Text("\n"))
-            
-            buffer = ""
-            in_tag = False
-            i += 1
-            
-        elif not in_tag and char == "&":
-            # Handle entities
-            matched = False
-            for length in range(4, 8):
-                if i + length <= len(body):
-                    entity = body[i:i+length]
-                    if entity in ENTITIES:
-                        buffer += ENTITIES[entity]
-                        i += length
-                        matched = True
-                        break
-            if not matched:
-                buffer += "&"
+            if char == "<":
+                # If we have text in buffer, add it as Text object
+                if buffer:
+                    self.add_text(buffer)
+                    buffer = ""
+                
+                in_tag = True
                 i += 1
                 
-        elif not in_tag:
-            # Handle regular text - collapse whitespace
-            if char.isspace():
-                if buffer and not buffer.endswith(" "):
-                    buffer += " "
+            elif char == ">" and in_tag:
+                # End of tag - add Tag object
+                tag_content = buffer.strip()
+                self.add_tag(tag_content)
+                
+                # Extract clean tag name for block element checking
+                # Remove any attributes and clean up the tag name
+                clean_tag = tag_content.split()[0] if tag_content else ""
+                if clean_tag.startswith('/'):
+                    clean_tag = clean_tag[1:]  # Remove closing slash
+                clean_tag = clean_tag.lower()
+                
+                # Handle block elements - add newline after certain tags
+                if clean_tag == "br":
+                    self.add_text("\n")
+                elif clean_tag in block_start_tags and tag_content.startswith('/'):
+                    # Only add newlines for CLOSING block tags
+                    self.add_text("\n")
+                
+                buffer = ""
+                in_tag = False
+                i += 1
+                
+            elif not in_tag and char == "&":
+                # Handle entities
+                matched = False
+                for length in range(4, 8):
+                    if i + length <= len(self.body):
+                        entity = self.body[i:i+length]
+                        if entity in ENTITIES:
+                            buffer += ENTITIES[entity]
+                            i += length
+                            matched = True
+                            break
+                if not matched:
+                    buffer += "&"
+                    i += 1
+                    
+            elif not in_tag:
+                # Handle regular text - collapse whitespace
+                if char.isspace():
+                    if buffer and not buffer.endswith(" "):
+                        buffer += " "
+                else:
+                    buffer += char
+                i += 1
             else:
+                # We're in a tag, accumulate tag content
                 buffer += char
-            i += 1
-        else:
-            # We're in a tag, accumulate tag content
-            buffer += char
-            i += 1
-    
-    # Add any remaining text
-    if not in_tag and buffer:
-        out.append(Text(buffer))
+                i += 1
+        
+        # Add any remaining text
+        if not in_tag and buffer:
+            self.add_text(buffer)
 
-    return out
+        return self.finish()
+    
+    def get_attributes(self, text):
+        parts = text.split()
+        tag = parts[0].casefold()
+        attributes = {}
+        for attrpair in parts[1:]:
+            if "=" in attrpair:
+                key, value = attrpair.split("=", 1)
+                if len(value) > 2 and value[0] in ["'", "\""]:
+                    value = value[1:-1]
+                attributes[key.casefold()] = value
+            else:
+                attributes[attrpair.casefold()] = ""
+        return tag, attributes
+    
+    def add_text(self, text):
+        """Add a text node to the parser."""
+        if text.isspace(): return # Ignore whitespace-only text (for now)
+        self.implicit_tags(None)
+        parent = self.unfinished[-1]
+        node = Text(text, parent)
+        parent.children.append(node)
+
+    def add_tag(self, tag):
+        """Add a tag node to the parser."""
+        tag, attributes = self.get_attributes(tag)
+        if tag.startswith("!"): return
+        self.implicit_tags(tag)
+        if tag.startswith("/"):
+            # Closing tag
+            if len(self.unfinished) == 1: return
+            node = self.unfinished.pop()
+            parent = self.unfinished[-1] if self.unfinished else None
+            if parent:
+                parent.children.append(node)
+        elif tag in SELF_CLOSING_TAGS:
+            parent = self.unfinished[-1]
+            node = Element(tag, attributes, parent)
+            parent.children.append(node)
+        else:
+            parent = self.unfinished[-1] if self.unfinished else None
+            node = Element(tag, attributes, parent)
+            self.unfinished.append(node)
+
+    def finish(self):
+        """Finish parsing and return the root node."""
+        if not self.unfinished:
+            self.implicit_tags(None)
+        while len(self.unfinished) > 1:
+            node = self.unfinished.pop()
+            parent = self.unfinished[-1]
+            parent.children.append(node)
+        return self.unfinished.pop()
+    
+    def implicit_tags(self, tag):
+        while True:
+            open_tags = [node.tag for node in self.unfinished]
+            
+            if open_tags == [] and tag != "html":
+                self.add_tag("html")
+            elif open_tags == ["html"] and tag not in ["head", "body", "/html"]:
+                if tag is not None and tag in self.HEAD_TAGS:
+                    self.add_tag("head")
+                else:
+                    self.add_tag("body")
+            elif open_tags == ["html", "head"] and tag not in ["/head"] + self.HEAD_TAGS:
+                self.add_tag("/head")
+            else:
+                break
 
 def show_source(body):
     print(body)
@@ -248,3 +339,8 @@ class URL:
                 new_url = f"{self.scheme}://{self.host}:{self.port}{new_url}"
             return new_url
         return None
+    
+def print_tree(node, indent=0):
+    print(" " * indent, node)
+    for child in node.children:
+        print_tree(child, indent + 2)
