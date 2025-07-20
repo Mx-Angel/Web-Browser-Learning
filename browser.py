@@ -1,4 +1,4 @@
-from requests import URL, Text, Element, HTMLParser  # ✅ Add HTMLParser import
+from requests import URL, Text, print_tree, HTMLParser
 
 from requests import DEFAULT_PAGE
 
@@ -313,6 +313,7 @@ class Browser:
             self.canvas.configure(scrollregion=(0, 0, actual_width, actual_height))
 
     def draw(self):
+        print(self.tree)
         self.canvas.delete("all")
         # Draw ALL content - tkinter will handle what's visible
         for x, y, word, font in self.display_list:

@@ -28,6 +28,7 @@ class Text:
     
     def __repr__(self):
         return repr(self.text)
+
 class Element:
     def __init__(self, tag, attributes, parent):
         self.tag = tag
@@ -51,9 +52,6 @@ class HTMLParser:
         buffer = ""
         in_tag = False
         i = 0
-
-        # Block elements that should create line breaks
-        block_start_tags = ["div", "h1", "h2", "h3", "h4", "h5", "h6", "li"]
 
         while i < len(self.body):
             char = self.body[i]
@@ -82,7 +80,7 @@ class HTMLParser:
                 # Handle block elements - add newline after certain tags
                 if clean_tag == "br":
                     self.add_text("\n")
-                elif clean_tag in block_start_tags and tag_content.startswith('/'):
+                elif tag_content.startswith('/'):
                     # Only add newlines for CLOSING block tags
                     self.add_text("\n")
                 
@@ -150,9 +148,11 @@ class HTMLParser:
         """Add a tag node to the parser."""
         tag, attributes = self.get_attributes(tag)
         if tag.startswith("!"): return
-        self.implicit_tags(tag)
+        self.implicit_tags(tag) # Check that the tag is added to the correct area, e.g. head, body
         if tag.startswith("/"):
-            # Closing tag
+            # We do it like this as there can never be a case where a tag is open, a second one is opened
+            # but then the first is closed, the one nested within it must always be closed before the one
+            # wrapping it can
             if len(self.unfinished) == 1: return
             node = self.unfinished.pop()
             parent = self.unfinished[-1] if self.unfinished else None
