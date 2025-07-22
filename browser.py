@@ -1,4 +1,5 @@
 from requests import URL, Text, Element, HTMLParser
+from cssparser import CSSParser, style, cascade_priority
 
 from requests import DEFAULT_PAGE
 
@@ -22,6 +23,7 @@ BLOCK_ELEMENTS = [
     "legend", "details", "summary"
 ]
 SCROLL_STEP = 20
+DEFAULT_STYLE_SHEET = CSSParser(open("browser.css").read()).parse()
 
 def get_font(size, weight="normal", style="roman"):
     key = (size, weight, style)
@@ -88,12 +90,15 @@ class BlockLayout:
 
     def paint(self):
         cmds = []
-        if isinstance(self.node, Element) and self.node.tag == "pre":
+        bgcolor = self.node.style.get("background-color", "transparent")
+        if bgcolor != "transparent":
             x2, y2 = self.x + self.width, self.y + self.height
-            rect = DrawRect(self.x, self.y, x2, y2, "gray")
+            rect = DrawRect(self.x, self.y, x2, y2, bgcolor)
             cmds.append(rect)
         if self.layout_mode() == "inline":
             cmds.extend(self.display_list)
+            # for x, y, word, font, color in self.display_list: Don't change this line, something wrong with instructions I think?
+            #     cmds.append(DrawText(x, y, word, font, color))
         return cmds
 
     def open_tag(self, tag):
@@ -128,8 +133,8 @@ class BlockLayout:
             self.cursor_y += VSTEP  # Extra space between paragraphs
         elif tag == "h1":
             self.centre_line = True
-            self.size -= 4
             self.flush()
+            self.size -= 4
         elif tag == "sup":
             self.size *= 2
         elif tag in ["div", "section", "article", "header", "footer", "main", "nav"]:
@@ -149,15 +154,19 @@ class BlockLayout:
         else:
             return "block"
 
-    def recurse(self, tree):
-        if isinstance(tree, Text):
-            for word in tree.text.split():
-                self.word(word)
+    def recurse(self, node):
+        if isinstance(node, Text):
+            for word in node.text.split():
+                self.word(node, word)
         else:
-            self.open_tag(tree.tag)
-            for child in tree.children:
+            if node.tag == "br": # Fix this so that h1 tags are big again and centring works again
+                self.flush()
+            for child in node.children:
                 self.recurse(child)
-            self.close_tag(tree.tag)
+            # self.open_tag(node.tag)
+            # for child in node.children:
+            #     self.recurse(child)
+            # self.close_tag(node.tag)
 
     def layout_intermediate(self):
         previous = None
@@ -170,36 +179,46 @@ class BlockLayout:
         if not self.line:
             return
         
-        metrics = [font.metrics() for _, _, font, _ in self.line]
+        metrics = [font.metrics() for x, word, font, color, is_super in self.line]
         max_ascent = max([metric['ascent'] for metric in metrics])
         max_descent = max([metric['descent'] for metric in metrics])
 
         if self.centre_line:
-            total_width = sum([font.measure(word) for _, word, font, _ in self.line])
+            total_width = sum([font.measure(word) for x, word, font, color, is_super in self.line])
             total_space = CANVAS_WIDTH - HSTEP * 2  # Keep some space on the sides
             offset = (total_space - total_width) // 2
 
             # Adjust for centring (now with 4-tuple)
-            self.line = [(x + offset, word, font, is_super) for x, word, font, is_super in self.line]
+            self.line = [(x + offset, word, font, color, is_super) for x, word, font, color, is_super in self.line]
             self.centre_line = False
 
         baseline = self.cursor_y + max_ascent
 
-        for rel_x, word, font, is_super in self.line:
+        for rel_x, word, font, color, is_super in self.line:
             x = self.x + rel_x
             y = self.y + baseline - font.metrics("ascent")
             if is_super:
                 y = self.y + baseline - max_ascent  # Move THIS word up
-            self.display_list.append(DrawText(x, y, word, font))
+            self.display_list.append(DrawText(x, y, word, color, font))
 
         # Move cursor down for next line
         self.cursor_y = baseline + max_descent
         self.cursor_x = 0
         self.line = []
 
-    def word(self, word):
+    def word(self, node, word):
+        # Read style info from node.style
+        weight = node.style.get("font-weight", "normal")
+        style = node.style.get("font-style", "normal")
+        if style == "normal":
+            style = "roman"
+        size_str = node.style.get("font-size", "16px")
+        size = int(float(size_str[:-2]) * 0.75)  # Convert CSS px to Tk points
+        color = node.style.get("color", "black")
+
+        font = get_font(size, weight, style)
+
         while word:
-            font = get_font(self.size, self.weight, self.style)
             w = font.measure(word)
             
             # Check if word fits on current line
@@ -208,28 +227,27 @@ class BlockLayout:
 
                 for index, char in enumerate(word):
                     partial_word = word[:index + 1]
+                    # Split words across lines
                     if self.cursor_x + font.measure(partial_word + "-") < CANVAS_WIDTH - HSTEP:
                         split_word = partial_word
                     else:
                         break
 
                 if not split_word:
-                    # If no split word found, just flush current line
                     self.flush()
                 else:
                     first_part = split_word + "-"
-                    self.add_word_to_line(first_part, font)
+                    self.add_word_to_line(first_part, font, color)
                     self.flush()  # Flush current line after adding first part
 
                     # Print remaining part if word
                     word = word[len(split_word):]
                     continue
             else:
-                # Add word to current line
-                self.add_word_to_line(word, font)
+                self.add_word_to_line(word, font, color)
                 break
 
-    def add_word_to_line(self, word, font):
+    def add_word_to_line(self, word, font, color):
         """Helper method to add word to current line"""
         is_super = False
         w = font.measure(word)
@@ -240,7 +258,7 @@ class BlockLayout:
             self.cursor_x -= (previous_space + reduced_space)
             is_super = True
         
-        self.line.append((self.cursor_x, word, font, is_super))
+        self.line.append((self.cursor_x, word, font, color, is_super))
         
         if self.super_text:
             self.cursor_x += w
@@ -278,11 +296,12 @@ class DocumentLayout:
         return []
 
 class DrawText:
-    def __init__(self, x1, y1, text, font):
+    def __init__(self, x1, y1, text, color, font):
         self.top = y1
         self.left = x1
         self.text = text
         self.font = font
+        self.color = color
         self.bottom = y1 + font.metrics("linespace")
 
     def execute(self, scroll, canvas):
@@ -291,6 +310,7 @@ class DrawText:
             self.top - scroll,
             text = self.text,
             font = self.font,
+            fill=self.color,
             anchor = "nw"
         )
     
@@ -312,14 +332,20 @@ class DrawRect:
             fill=self.color
         )
 
+def tree_to_list(tree, list):
+    list.append(tree)
+    for child in tree.children:
+        tree_to_list(child, list)
+    return list
 class Browser:
     def __init__(self):
-        self.nodes = []
+        self.nodes = [] # Not used but referenced in book in chapter 6, will leave for now
         self.window = tk.Tk()
         self.canvas = tk.Canvas(
             self.window,
             width=WIDTH,
-            height=HEIGHT
+            height=HEIGHT,
+            bg="white"
         )
         # Working scrollbar setup
         self.scrollbar = tk.Scrollbar(self.window, orient="vertical", command=self.move)
@@ -374,6 +400,30 @@ class Browser:
             tree = HTMLParser(body).parse()
 
         self.tree = tree
+        rules = DEFAULT_STYLE_SHEET.copy()
+
+        # Look for linked stylesheets in the document
+        links = [
+            node.attributes["href"]
+            for node in tree_to_list(tree, [])
+            if isinstance(node, Element)
+            and node.tag == "link"
+            and node.attributes.get("rel") == "stylesheet"
+            and "href" in node.attributes
+        ]
+
+        # Try loading and parsing each stylesheet
+        for link in links:
+            style_url = url.resolve(link)
+            try:
+                body = style_url.request()
+            except:
+                continue
+            rules.extend(CSSParser(body).parse())
+
+        # Apply all styles to the tree
+        style(self.tree, sorted(rules, key=cascade_priority))
+
         
         # Set initial canvas dimensions if not set
         global CANVAS_WIDTH, CANVAS_HEIGHT
@@ -381,7 +431,7 @@ class Browser:
             self.window.update_idletasks()
             CANVAS_WIDTH = self.canvas.winfo_width()
             CANVAS_HEIGHT = self.canvas.winfo_height()
-        
+
         self.document = DocumentLayout(self.tree)
         self.document.layout()
         
@@ -431,8 +481,6 @@ class Browser:
             bottom = top + visible_fraction
         else:
             top, bottom = 0, 1
-
-        print(f"{top} and {bottom}")
 
         self.scrollbar.set(top, bottom)
 

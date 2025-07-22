@@ -327,6 +327,25 @@ class URL:
 
         return content
     
+    def resolve(self, url):
+            if "://" in url:
+                return URL(url)  # Fully qualified URL
+
+            if url.startswith("//"):
+                return URL(self.scheme + ":" + url)  # Protocol-relative
+
+            if not url.startswith("/"):
+                # Handle relative path resolution and '..'
+                dir, _ = self.path.rsplit("/", 1)
+                while url.startswith("../"):
+                    _, url = url.split("/", 1)
+                    if "/" in dir:
+                        dir, _ = dir.rsplit("/", 1)
+                url = dir + "/" + url
+
+            return URL(f"{self.scheme}://{self.host}:{self.port}{url}")
+
+    
     def url_redirect(self, response_headers=None):
         """Handle URL redirection."""
         if response_headers is None:
