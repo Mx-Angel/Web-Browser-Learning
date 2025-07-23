@@ -133,31 +133,28 @@ class DescendantSelector:
 def style(node, rules):
     node.style = {} # Add style attribute here so only exists if needed
 
+    # Apply inherited styles
     for property, default_value in INHERITED_PROPERTIES.items():
         if node.parent:
             node.style[property] = node.parent.style[property]
         else:
             node.style[property] = default_value
-    
-    # For each matching selector, apply its style declarations to the node
+
+    # Apply matching CSS rules (rules override inheritance)
     for selector, body in rules:
-        if not selector.matches(node): continue
-        for property, value in body.items():
-            node.style[property] = value
+        if selector.matches(node):
+            for prop, val in body.items():
+                node.style[prop] = val
 
-    if isinstance(node, Element) and "style" in node.attributes:
-        pairs = CSSParser(node.attributes["style"]).body()
-        for property, value in pairs.items(): # For dictionaries .items() needs to be used
-            node.style[property] = value
+    # Resolve font-size percentages BEFORE visiting children
+    if "font-size" in node.style and node.style["font-size"].endswith("%"):
+        pct = float(node.style["font-size"][:-1]) / 100
+        if node.parent:
+            parent_size = float(node.parent.style["font-size"][:-2])  # "16px" -> 16
+        else:
+            parent_size = float(INHERITED_PROPERTIES["font-size"][:-2])
+        node.style["font-size"] = f"{pct * parent_size}px"
 
+    # Recurse into children
     for child in node.children:
         style(child, rules)
-
-    if node.style["font-size"].endswith("%"):
-        if node.parent:
-            parent_font_size = node.parent.style["font-size"]
-        else:
-            parent_font_size = INHERITED_PROPERTIES["font-size"]
-        node_pct = float(node.style["font-size"][:-1]) / 100
-        parent_px = float(parent_font_size[:-2])
-        node.style["font-size"] = str(node_pct * parent_px) + "px"

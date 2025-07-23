@@ -101,47 +101,6 @@ class BlockLayout:
             #     cmds.append(DrawText(x, y, word, font, color))
         return cmds
 
-    def open_tag(self, tag):
-        if tag == "i":
-            self.style = "italic"
-        elif tag == "b":
-            self.weight = "bold"
-        elif tag == "small":
-            self.size -= 2
-        elif tag == "big":
-            self.size += 2
-        elif tag == "br":
-            self.flush()
-        elif tag.startswith("h1"):
-            self.flush()  # Flush current line before heading
-            self.size += 4
-        elif tag == "sup":
-            self.size //= 2
-            self.super_text = True
-
-    def close_tag(self, tag):
-        if tag == "i":
-            self.style = "roman"
-        elif tag == "b":
-            self.weight = "normal"
-        elif tag == "small":
-            self.size += 2
-        elif tag == "big":
-            self.size -= 2
-        elif tag == "p":
-            self.flush()
-            self.cursor_y += VSTEP  # Extra space between paragraphs
-        elif tag == "h1":
-            self.centre_line = True
-            self.flush()
-            self.size -= 4
-        elif tag == "sup":
-            self.size *= 2
-        elif tag in ["div", "section", "article", "header", "footer", "main", "nav"]:
-            self.flush()
-        elif tag == "br":
-            self.flush()
-
     def layout_mode(self):
         if isinstance(self.node, Text):
             return "inline"
@@ -161,12 +120,10 @@ class BlockLayout:
         else:
             if node.tag == "br": # Fix this so that h1 tags are big again and centring works again
                 self.flush()
+            if node.tag == "h1":
+                self.centre_line = True
             for child in node.children:
                 self.recurse(child)
-            # self.open_tag(node.tag)
-            # for child in node.children:
-            #     self.recurse(child)
-            # self.close_tag(node.tag)
 
     def layout_intermediate(self):
         previous = None
@@ -184,6 +141,7 @@ class BlockLayout:
         max_descent = max([metric['descent'] for metric in metrics])
 
         if self.centre_line:
+            print("Here")
             total_width = sum([font.measure(word) for x, word, font, color, is_super in self.line])
             total_space = CANVAS_WIDTH - HSTEP * 2  # Keep some space on the sides
             offset = (total_space - total_width) // 2
@@ -213,7 +171,7 @@ class BlockLayout:
         if style == "normal":
             style = "roman"
         size_str = node.style.get("font-size", "16px")
-        size = int(float(size_str[:-2]) * 0.75)  # Convert CSS px to Tk points
+        size = int(float(size_str[:-2]))  # Convert CSS px to Tk points
         color = node.style.get("color", "black")
 
         font = get_font(size, weight, style)
@@ -513,6 +471,9 @@ class Browser:
     def draw(self):
         self.canvas.delete("all")
         for cmd in self.display_list:
+            # if hasattr(cmd, "font") and hasattr(cmd, "text"):
+            #     if cmd.text == "Applying":
+            #         print(f"Text: '{cmd.text}' - Font Size: {cmd.font.actual('size')}")
             if cmd.top > self.scroll + HEIGHT: continue
             if cmd.bottom < self.scroll: continue
             cmd.execute(self.scroll, self.canvas)
