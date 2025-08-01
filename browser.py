@@ -34,6 +34,69 @@ def get_font(size, weight="normal", style="roman"):
     return FONTS[key][0]
 
 
+class LineLayout:
+    def __init__(self, node, parent, previous):
+        self.node = node
+        self.parent = parent
+        self.previous = previous
+        self.children = []
+
+    def layout(self):
+        self.width = self.parent.width
+        self.x = self.parent.x
+
+        if self.previous:
+            self.y = self.previous.y + self.previous.height
+        else:
+            self.y = self.parent.y
+
+        for word in self.children:
+            word.layout()
+
+        # Calculate baseline (only if there are children)
+        if self.children:
+            max_ascent = max([child.font.metrics("ascent") for child in self.children])
+            baseline = self.y + max_ascent # Remember that y is the top of the line
+            for word in self.children:
+                word.y = baseline - word.font.metrics("ascent")
+            max_descent = max([word.font.metrics("descent") for word in self.children])
+            self.height = max_ascent + max_descent
+        else:
+            self.height = 0
+
+    def paint(self):
+        return []
+
+
+class TextLayout:
+    def __init__(self, node, word, parent, previous):
+        self.node = node
+        self.word = word
+        self.children = []
+        self.parent = parent
+        self.previous = previous
+
+    def layout(self):
+        weight = self.node.style["font-weight"]
+        style = self.node.style["font-style"]
+        if style == "normal": style = "roman"
+        size = int(float(self.node.style["font-size"][:-2])) # Convert CSS px to Tk points
+        self.font = get_font(size, weight, style)
+
+        self.width = self.font.measure(self.word)
+        
+        if self.previous:
+            space = self.previous.font.measure(" ")
+            self.x = self.previous.x + self.previous.width + space
+        else:
+            self.x = self.parent.x
+
+        self.height = self.font.metrics("linespace")
+
+    def paint(self):
+        color = self.node.style["color"]
+        return [DrawText(self.x, self.y, self.word, color, self.font)]
+
 class BlockLayout:
     def __init__(self, node, parent, previous):
         self.node = node
@@ -44,6 +107,13 @@ class BlockLayout:
         self.y = None
         self.width = None
         self.height = None
+        
+        # Properties for inline layout mode (old system compatibility)
+        self.cursor_x = 0
+        self.cursor_y = 0
+        self.line = []
+        self.display_list = []
+        self.centre_line = False
         
     def layout(self):
         self.x = self.parent.x
@@ -63,30 +133,16 @@ class BlockLayout:
 
             for child in self.children:
                 child.layout()
-
-            self.height = sum([child.height for child in self.children])
-            
-            self.display_list = []
-            for child in self.children:
-                if hasattr(child, 'display_list'):
-                    self.display_list.extend(child.display_list)
         else:
             # Inline mode
-            self.display_list = []
-            self.cursor_x = 0
-            self.cursor_y = 0
-            self.weight = "normal"
-            self.style = "roman"
-            self.size = 16
-            self.line = []
-            self.centre_line = False
-            self.super_text = False
-            
+            self.new_line()
             self.recurse(self.node)
-            self.flush()
             
-            # Height is based on how much text we laid out
-            self.height = self.cursor_y
+            # Layout all line children
+            for child in self.children:
+                child.layout()
+
+        self.height = sum([child.height for child in self.children])
 
     def paint(self):
         cmds = []
@@ -95,10 +151,6 @@ class BlockLayout:
             x2, y2 = self.x + self.width, self.y + self.height
             rect = DrawRect(self.x, self.y, x2, y2, bgcolor)
             cmds.append(rect)
-        if self.layout_mode() == "inline":
-            cmds.extend(self.display_list)
-            # for x, y, word, font, color in self.display_list: Don't change this line, something wrong with instructions I think?
-            #     cmds.append(DrawText(x, y, word, font, color))
         return cmds
 
     def layout_mode(self):
@@ -118,8 +170,8 @@ class BlockLayout:
             for word in node.text.split():
                 self.word(node, word)
         else:
-            if node.tag == "br": # Fix this so that h1 tags are big again and centring works again
-                self.flush()
+            if node.tag == "br": # Create a new line for line breaks
+                self.new_line()
             if node.tag == "h1":
                 self.centre_line = True
             for child in node.children:
@@ -141,7 +193,6 @@ class BlockLayout:
         max_descent = max([metric['descent'] for metric in metrics])
 
         if self.centre_line:
-            print("Here")
             total_width = sum([font.measure(word) for x, word, font, color, is_super in self.line])
             total_space = CANVAS_WIDTH - HSTEP * 2  # Keep some space on the sides
             offset = (total_space - total_width) // 2
@@ -175,54 +226,40 @@ class BlockLayout:
         color = node.style.get("color", "black")
 
         font = get_font(size, weight, style)
-
-        while word:
-            w = font.measure(word)
-            
-            # Check if word fits on current line
-            if self.cursor_x + w > self.width:
-                split_word = None
-
-                for index, char in enumerate(word):
-                    partial_word = word[:index + 1]
-                    # Split words across lines
-                    if self.cursor_x + font.measure(partial_word + "-") < CANVAS_WIDTH - HSTEP:
-                        split_word = partial_word
-                    else:
-                        break
-
-                if not split_word:
-                    self.flush()
-                else:
-                    first_part = split_word + "-"
-                    self.add_word_to_line(first_part, font, color)
-                    self.flush()  # Flush current line after adding first part
-
-                    # Print remaining part if word
-                    word = word[len(split_word):]
-                    continue
-            else:
-                self.add_word_to_line(word, font, color)
-                break
-
-    def add_word_to_line(self, word, font, color):
-        """Helper method to add word to current line"""
-        is_super = False
         w = font.measure(word)
+
+        # Get the current line (or create one if it doesn't exist)
+        if not self.children:
+            self.new_line()
+        line = self.children[-1]
+
+        # Does the word fit?
+        if self.cursor_x + w > self.width:
+            self.new_line()
+            line = self.children[-1]
+
+        # Add word to current line
+        self.add_word_to_line(node, word, line)
+
+    def add_word_to_line(self, node, word, line):
+        """Helper method to add a TextLayout object to the current line"""
+        previous_word = line.children[-1] if line.children else None
+        text = TextLayout(node, word, line, previous_word)
+        line.children.append(text)
         
-        if self.super_text:
-            previous_space = font.measure(" ")
-            reduced_space = previous_space // 2
-            self.cursor_x -= (previous_space + reduced_space)
-            is_super = True
-        
-        self.line.append((self.cursor_x, word, font, color, is_super))
-        
-        if self.super_text:
-            self.cursor_x += w
-            self.super_text = False
-        else:
-            self.cursor_x += w + font.measure(" ")
+        # For now, just estimate the cursor position for word wrapping
+        # The actual layout will happen later when LineLayout.layout() is called
+        font = get_font(16, "normal", "roman")  # Use default font for estimation
+        space = font.measure(" ") if previous_word else 0
+        self.cursor_x += font.measure(word) + space
+
+    def new_line(self):
+        """Creates a new LineLayout and resets cursor_x"""
+        self.cursor_x = 0
+        last_line = self.children[-1] if self.children else None
+        new_line = LineLayout(self.node, self, last_line)
+        self.children.append(new_line)
+
 
 class DocumentLayout:
     def __init__(self, node):
@@ -295,6 +332,7 @@ def tree_to_list(tree, list):
     for child in tree.children:
         tree_to_list(child, list)
     return list
+
 class Browser:
     def __init__(self):
         self.nodes = [] # Not used but referenced in book in chapter 6, will leave for now
@@ -327,9 +365,31 @@ class Browser:
         self.canvas.bind("<Page_Down>", lambda e: self.canvas.yview_scroll(1, "pages"))
         self.window.bind("<Button-4>", lambda e: self.scroll_up(e))
         self.window.bind("<Button-5>", lambda e: self.scroll_down(e))
+        self.window.bind("<Button-1>", lambda e: self.click(e)) # Click handling
         
         # Keep resize event
         self.canvas.bind("<Configure>", self.window_resize)
+
+        # Current URL
+        self.url = None
+
+    def click(self, event):
+        x, y = event.x, event.y
+        # The current x and y are canvas coordinates (0 to HEIGHT) this is from the top of the canvas
+        # We need to convert them to document coordinates (The actual x and y of the visible area)
+        # which is from the top of the document (whole page)
+        y += self.scroll
+        # Find all objects in the document that match the visible area
+        objs = [obj for obj in tree_to_list(self.document, []) if obj.x <= x < obj.x + obj.width and obj.y <= y < obj.y + obj.height]
+        if not objs: return
+        elt = objs[-1].node # This is the most specific/nested element at the clicked position
+        while elt:
+            if isinstance(elt, Text):
+                pass
+            elif elt.tag == "a" and "href" in elt.attributes:
+                url = self.url.resolve(elt.attributes["href"])
+                return self.load(url)
+            elt = elt.parent # The most deepest element isn't always the link tag, so we need to check parents too
 
     def window_resize(self, event):
         global CANVAS_WIDTH, CANVAS_HEIGHT
@@ -343,6 +403,7 @@ class Browser:
             self.draw()
 
     def load(self, url):
+        self.url = url
         if url.scheme == "file":
             with open(url.path, 'r', encoding='utf8') as f:
                 body = f.read()
