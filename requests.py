@@ -240,6 +240,14 @@ class URL:
             self.port = int(port)
         self.path = "/" + url if url else "/"
 
+    def __str__(self):
+        port_part = ":" + str(self.port)
+        if self.scheme == "https" and self.port == 443:
+            port_part = ""
+        if self.scheme == "http" and self.port == 80:
+            port_part = ""
+        return self.scheme + "://" + self.host + port_part + self.path
+
     def parse_data_url(self, data_url: str):
         """Parse a data URL and return the content."""
         if data_url == "":
