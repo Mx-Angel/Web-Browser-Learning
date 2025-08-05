@@ -241,12 +241,15 @@ class URL:
         self.path = "/" + url if url else "/"
 
     def __str__(self):
-        port_part = ":" + str(self.port)
-        if self.scheme == "https" and self.port == 443:
+        port_part = ":" + str(self.port) if self.port is not None else ""
+        scheme = self.scheme if self.scheme is not None else ""
+        host = self.host if self.host is not None else ""
+        path = self.path if self.path is not None else ""
+        if scheme == "https" and self.port == 443:
             port_part = ""
-        if self.scheme == "http" and self.port == 80:
+        if scheme == "http" and self.port == 80:
             port_part = ""
-        return self.scheme + "://" + self.host + port_part + self.path
+        return scheme + "://" + host + port_part + path
 
     def parse_data_url(self, data_url: str):
         """Parse a data URL and return the content."""
@@ -339,10 +342,10 @@ class URL:
             if "://" in url:
                 return URL(url)  # Fully qualified URL
 
-            if url.startswith("//"):
+            if url.startswith("//") and self.scheme is not None:
                 return URL(self.scheme + ":" + url)  # Protocol-relative
 
-            if not url.startswith("/"):
+            if not url.startswith("/") and self.path is not None:
                 # Handle relative path resolution and '..'
                 dir, _ = self.path.rsplit("/", 1)
                 while url.startswith("../"):

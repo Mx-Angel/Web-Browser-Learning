@@ -1,5 +1,8 @@
 from utils import Rect
 from requests import Text, Element
+from browser import DrawText, DrawRect, get_font
+
+from browser import BLOCK_ELEMENTS, CANVAS_WIDTH, HSTEP, WIDTH, HSTEP, VSTEP
 
 # Import constants from browser module
 def get_constants():
@@ -49,8 +52,6 @@ class TextLayout:
         self.previous = previous
 
     def layout(self):
-        from browser import get_font  # Import here to avoid circular imports
-        
         weight = self.node.style["font-weight"]
         style = self.node.style["font-style"]
         if style == "normal": style = "roman"
@@ -68,8 +69,6 @@ class TextLayout:
         self.height = self.font.metrics("linespace")
 
     def paint(self):
-        from browser import DrawText  # Import here to avoid circular imports
-        
         color = self.node.style["color"]
         return [DrawText(self.x, self.y, self.word, color, self.font)]
 
@@ -122,8 +121,6 @@ class BlockLayout:
         self.height = sum([child.height for child in self.children])
 
     def paint(self):
-        from browser import DrawRect  # Import here to avoid circular imports
-        
         cmds = []
         bgcolor = self.node.style.get("background-color", "transparent")
         if bgcolor != "transparent":
@@ -131,9 +128,7 @@ class BlockLayout:
             cmds.append(rect)
         return cmds
 
-    def layout_mode(self):
-        from browser import BLOCK_ELEMENTS  # Import here to avoid circular imports
-        
+    def layout_mode(self):        
         if isinstance(self.node, Text):
             return "inline"
         elif any([isinstance(child, Element) and \
@@ -165,8 +160,6 @@ class BlockLayout:
             previous = next
 
     def flush(self):
-        from browser import DrawText, CANVAS_WIDTH, HSTEP  # Import here to avoid circular imports
-        
         if not self.line:
             return
         
@@ -198,7 +191,6 @@ class BlockLayout:
         self.line = []
 
     def word(self, node, word):
-        from browser import get_font  # Import here to avoid circular imports
         
         # Read style info from node.style
         weight = node.style.get("font-weight", "normal")
@@ -226,8 +218,6 @@ class BlockLayout:
         self.add_word_to_line(node, word, line)
 
     def add_word_to_line(self, node, word, line):
-        from browser import get_font  # Import here to avoid circular imports
-        
         """Helper method to add a TextLayout object to the current line"""
         previous_word = line.children[-1] if line.children else None
         text = TextLayout(node, word, line, previous_word)
@@ -261,9 +251,7 @@ class DocumentLayout:
         self.width = None
         self.height = None
 
-    def layout(self):
-        from browser import WIDTH, HSTEP, VSTEP  # Import here to avoid circular imports
-        
+    def layout(self):        
         # Set document dimensions first
         self.width = WIDTH - 2*HSTEP
         self.x = HSTEP

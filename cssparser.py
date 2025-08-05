@@ -115,7 +115,7 @@ class TagSelector:
         return isinstance(node, Element) and self.tag == node.tag
 
 class DescendantSelector:
-    def __init__(self, ancestor: TagSelector, descendant: TagSelector):
+    def __init__(self, ancestor, descendant: TagSelector):
         self.ancestor = ancestor
         self.descendant = descendant
         self.priority = ancestor.priority + descendant.priority
