@@ -22,7 +22,7 @@ class CSSParser:
             out = DescendantSelector(out, descendant)
             self.whitespace()
         return out
-    
+
     def parse(self):
         rules = [] # Parse through the CSS
         while self.i < len(self.s):
