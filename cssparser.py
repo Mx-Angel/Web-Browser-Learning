@@ -1,6 +1,5 @@
 from requests import Element
 
-
 # Constants
 INHERITED_PROPERTIES = {
     "font-size": "16px",
