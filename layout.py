@@ -1,4 +1,4 @@
-import tkinter.font
+from utils import Rect
 from requests import Text, Element
 
 # Import constants from browser module
@@ -218,7 +218,7 @@ class BlockLayout:
         line = self.children[-1]
 
         # Does the word fit?
-        if self.cursor_x + w > self.width:
+        if self.width is not None and self.cursor_x + w > self.width:
             self.new_line()
             line = self.children[-1]
 
@@ -248,7 +248,7 @@ class BlockLayout:
 
     def self_rect(self):
         return Rect(self.x, self.y,
-            self.x + self.width, self.y + self.height)
+            (self.x or 0) + (self.width or 0), (self.y or 0) + (self.height or 0))
 
 
 class DocumentLayout:
