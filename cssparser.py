@@ -71,7 +71,7 @@ class CSSParser:
         self.whitespace()
         val = self.word()
         return prop.casefold(), val
-    
+
     def body(self):
         pairs = {}
         while self.i < len(self.s) and self.s[self.i] != "}":
