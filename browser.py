@@ -6,215 +6,28 @@
 # - Tab system with multiple pages
 # - Chrome UI (tab bar, address bar, back button)
 # - Event handling and user interaction
-# - Drawing system for rendering content and UI
 # ==============================================================================
 
 # First-party import statements
 from requests import URL, Text, Element, HTMLParser
 from cssparser import CSSParser, style, cascade_priority
 from layout import DocumentLayout, tree_to_list, paint_tree
-from utils import Rect
+from drawing import DrawText, DrawLine, DrawRect, DrawOutline, Rect
+from fonts import get_font
 
 # First-party constant imports
-from requests import DEFAULT_PAGE
+from constants import WIDTH, HEIGHT, CANVAS_WIDTH, CANVAS_HEIGHT, SCROLL_STEP, DEFAULT_PAGE, VSTEP
 
 # Standard library imports
 import tkinter as tk
-import tkinter.font
 import sys
 
 # ==============================================================================
 # GLOBAL VARIABLES AND CONSTANTS
 # ==============================================================================
 
-# Font cache - stores tkinter Font objects to avoid recreating them with each re-draw
-FONTS = {}
-
-# Browser window dimensions
-WIDTH, HEIGHT = 1280, 720
-CANVAS_WIDTH, CANVAS_HEIGHT = 0, 0
-
-# Horizontal and vertical spacing constraints
-HSTEP, VSTEP = 13, 18
-
-# HTML elements that create block-level layout (as opposed to inline)
-BLOCK_ELEMENTS = [
-    "html", "body", "article", "section", "nav", "aside",
-    "h1", "h2", "h3", "h4", "h5", "h6", "hgroup", "header",
-    "footer", "address", "p", "hr", "pre", "blockquote",
-    "ol", "ul", "menu", "li", "dl", "dt", "dd", "figure",
-    "figcaption", "main", "div", "table", "form", "fieldset",
-    "legend", "details", "summary"
-]
-
-# How many pixels to scroll with each scroll step
-SCROLL_STEP = 20
-
 # Default CSS rules applied to all pages
 DEFAULT_STYLE_SHEET = CSSParser(open("browser.css").read()).parse()
-
-# ==============================================================================
-# FONT MANAGEMENT
-# ==============================================================================
-
-def get_font(size: int, weight: str = "normal", style: str = "roman") -> tkinter.font.Font:
-    """
-    Get a tkinter Font object with specified properties.
-    Uses caching to avoid creating duplicate fonts.
-
-    :param size: Font size in points
-    :param weight: "normal" or "bold"
-    :param style: "roman" (normal) or "italic"
-    :return: tkinter.font.Font object
-    """
-    key = (size, weight, style)
-    if key not in FONTS:
-        font = tkinter.font.Font(
-            size=size,
-            weight="bold" if weight == "bold" else "normal", # Pylance gets angry if you just allow any string assignment so you need to be explicit
-            slant="italic" if style == "italic" else "roman"
-        )
-        label = tk.Label(font=font)  # Helper for font metrics
-        FONTS[key] = (font, label)
-    return FONTS[key][0]
-
-# ==============================================================================
-# DRAWING COMMAND CLASSES
-# ==============================================================================
-# These classes represent drawing operations that can be executed on a canvas.
-# Each has an execute() method that performs the actual drawing.
-# The scroll parameter allows content to scroll while chrome stays fixed.
-
-class DrawText:
-    """Draws text at a specific position with given font and color."""
-
-    def __init__(self, x1: int, y1: int, text: str, color: str, font: tkinter.font.Font):
-        """
-        Initialize a text drawing command.
-        
-        :param x1: X coordinate of the text's top-left corner
-        :param y1: Y coordinate of the text's top-left corner
-        :param text: Text string to display
-        :param color: Text color (e.g., "black", "red", "#FF0000")
-        :param font: tkinter Font object for text styling
-        """
-        # Position of the text is based on top-left corner
-        self.top = y1
-        self.left = x1
-        self.text = text
-        self.font = font
-        self.color = color
-        
-        # Calculate bottom boundary of the text
-        # Linespace returns the total vertical space used by the font including spacing
-        self.bottom = y1 + font.metrics("linespace")
-        
-        # Create rect field for consistency with other drawing commands
-        # This allows hit testing and bounds checking
-        text_width = font.measure(text)
-        text_height = font.metrics("linespace")
-        self.rect = Rect(x1, y1, x1 + text_width, y1 + text_height)
-
-    def execute(self, scroll: int, canvas: tkinter.Canvas):
-        """
-        Draw the text on the canvas.
-        
-        :param scroll: Vertical scroll offset (for scrollable content)
-        :param canvas: tkinter Canvas to draw on
-        :return: None
-        """
-        canvas.create_text(
-            self.left,
-            self.top - scroll,  # Subtract scroll to move content up/down
-            text = self.text,
-            font = self.font,
-            fill = self.color,
-            anchor = "nw"  # Anchor text so that it is centered vertically and horizontally around the top-left corner
-        )
-
-class DrawLine:
-    """Draws a line between two points."""
-
-    def __init__(self, x1: int, y1: int, x2: int, y2: int, color: str, thickness: int):
-        """
-        Initialize a line drawing command.
-        
-        :param x1: X coordinate of the line's start point
-        :param y1: Y coordinate of the line's start point
-        :param x2: X coordinate of the line's end point
-        :param y2: Y coordinate of the line's end point
-        :param color: Line color (e.g., "black", "red", "#FF0000")
-        :param thickness: Line width in pixels
-        """
-        self.color = color
-        self.thickness = thickness
-        
-        # Store line coordinates in a rect field for consistency
-        # For lines, rect represents the bounding box from start to end point
-        self.rect = Rect(x1, y1, x2, y2)
-
-    def execute(self, scroll: int, canvas: tkinter.Canvas):
-        """Draw the line on the canvas with scroll offset applied."""
-        canvas.create_line(
-            self.rect.left, self.rect.top - scroll, 
-            self.rect.right, self.rect.bottom - scroll, 
-            fill=self.color, width=self.thickness
-        )
-
-class DrawRect:
-    """Draws a filled rectangle."""
-
-    def __init__(self, rect: Rect, color: str):
-        """
-        Initialize a rectangle drawing command.
-        
-        :param rect: Rect object defining the rectangle bounds
-        :param color: Fill color (e.g., "white", "blue", "#00FF00")
-        """
-        self.rect = rect  # Rect object defining the rectangle bounds
-        self.color = color
-        
-        # Copy rect properties for easy access
-        self.top = rect.top
-        self.left = rect.left
-        self.bottom = rect.bottom
-        self.right = rect.right
-
-    def execute(self, scroll: int, canvas: tkinter.Canvas):
-        """Draw the filled rectangle on the canvas."""
-        canvas.create_rectangle(
-            self.rect.left,
-            self.rect.top - scroll,
-            self.rect.right,
-            self.rect.bottom - scroll,
-            width=0,  # No border
-            fill=self.color
-        )
-
-class DrawOutline:
-    """Draws a rectangle border (outline only, no fill)."""
-
-    def __init__(self, rect: Rect, color: str, thickness: int):
-        """
-        Initialize an outline drawing command.
-        
-        :param rect: Rect object defining the outline bounds
-        :param color: Border color (e.g., "black", "gray", "#888888")
-        :param thickness: Border width in pixels
-        """
-        self.rect = rect
-        self.color = color
-        self.thickness = thickness
-
-    def execute(self, scroll: int, canvas: tkinter.Canvas):
-        """Draw the rectangle outline on the canvas."""
-        canvas.create_rectangle(
-            self.rect.left, self.rect.top - scroll,
-            self.rect.right, self.rect.bottom - scroll,
-            width=self.thickness,
-            outline=self.color,
-            fill=""  # No fill, outline only
-        )
 
 # ==============================================================================
 # MAIN BROWSER CLASS
@@ -735,7 +548,7 @@ class Tab:
 
         self.browser.scrollbar.set(top, bottom)
 
-    def draw(self, canvas: tkinter.Canvas, offset: float):
+    def draw(self, canvas: tk.Canvas, offset: float):
         """
         Draw this tab's content to the canvas.
 
